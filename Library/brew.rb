@@ -1,8 +1,4 @@
-#!/System/Library/Frameworks/Ruby.framework/Versions/Current/usr/bin/ruby -W0
-
 std_trap = trap("INT") { exit! 130 } # no backtrace thanks
-
-HOMEBREW_BREW_FILE = ENV["HOMEBREW_BREW_FILE"]
 
 require "pathname"
 HOMEBREW_LIBRARY_PATH = Pathname.new(__FILE__).realpath.parent.join("Homebrew")
@@ -12,9 +8,6 @@ require "global"
 if ARGV == %w[--version] || ARGV == %w[-v]
   puts "Homebrew #{Homebrew.homebrew_version_string}"
   exit 0
-elsif ARGV.first == "-v"
-  # Shift the -v to the end of the parameter list
-  ARGV << ARGV.shift
 end
 
 if OS.mac? && MacOS.version < "10.6"
@@ -36,7 +29,7 @@ begin
   trap("INT", std_trap) # restore default CTRL-C handler
 
   empty_argv = ARGV.empty?
-  help_regex = /(-h$|--help$|--usage$|-\?$|^help$)/
+  help_flag_list = %w[-h --help --usage -? help]
   help_flag = false
   internal_cmd = true
   cmd = nil
@@ -44,14 +37,12 @@ begin
   ARGV.dup.each_with_index do |arg, i|
     if help_flag && cmd
       break
-    elsif arg =~ help_regex
+    elsif help_flag_list.include? arg
       help_flag = true
     elsif !cmd
       cmd = ARGV.delete_at(i)
     end
   end
-
-  cmd = HOMEBREW_INTERNAL_COMMAND_ALIASES.fetch(cmd, cmd)
 
   # Add contributed commands to PATH before checking.
   Dir["#{HOMEBREW_LIBRARY}/Taps/*/*/cmd"].each do |tap_cmd_dir|
@@ -80,14 +71,18 @@ begin
   if empty_argv || (help_flag && (cmd.nil? || internal_cmd))
     # TODO: - `brew help cmd` should display subcommand help
     require "cmd/help"
-    puts ARGV.usage
+    if empty_argv
+      $stderr.puts ARGV.usage
+    else
+      puts ARGV.usage
+    end
     exit ARGV.any? ? 0 : 1
   end
 
   if internal_cmd
-    Homebrew.send cmd.to_s.gsub("-", "_").downcase
+    Homebrew.send cmd.to_s.tr("-", "_").downcase
   elsif which "brew-#{cmd}"
-    %w[CACHE CELLAR LIBRARY_PATH PREFIX REPOSITORY].each do |e|
+    %w[CACHE LIBRARY_PATH].each do |e|
       ENV["HOMEBREW_#{e}"] = Object.const_get("HOMEBREW_#{e}").to_s
     end
     exec "brew-#{cmd}", *ARGV
@@ -96,7 +91,7 @@ begin
   else
     require "tap"
     possible_tap = case cmd
-    when *%w[brewdle brewdler bundle bundler]
+    when "brewdle", "brewdler", "bundle", "bundler"
       Tap.fetch("Homebrew", "bundle")
     when "cask"
       Tap.fetch("caskroom", "cask")
@@ -105,7 +100,7 @@ begin
     end
 
     if possible_tap && !possible_tap.installed?
-      brew_uid = File.stat(HOMEBREW_BREW_FILE).uid
+      brew_uid = HOMEBREW_BREW_FILE.stat.uid
       tap_commands = []
       if Process.uid.zero? && !brew_uid.zero?
         tap_commands += %W[/usr/bin/sudo -u ##{brew_uid}]
@@ -128,10 +123,10 @@ rescue UsageError
   abort ARGV.usage
 rescue SystemExit => e
   onoe "Kernel.exit" if ARGV.verbose? && !e.success?
-  puts e.backtrace if ARGV.debug?
+  $stderr.puts e.backtrace if ARGV.debug?
   raise
 rescue Interrupt => e
-  puts # seemingly a newline is typical
+  $stderr.puts # seemingly a newline is typical
   exit 130
 rescue BuildError => e
   e.dump
@@ -139,15 +134,15 @@ rescue BuildError => e
 rescue RuntimeError, SystemCallError => e
   raise if e.message.empty?
   onoe e
-  puts e.backtrace if ARGV.debug?
+  $stderr.puts e.backtrace if ARGV.debug?
   exit 1
 rescue Exception => e
   onoe e
   if internal_cmd
-    puts "#{Tty.white}Please report this bug:"
-    puts "    #{Tty.em}#{OS::ISSUES_URL}#{Tty.reset}"
+    $stderr.puts "#{Tty.white}Please report this bug:"
+    $stderr.puts "    #{Tty.em}#{OS::ISSUES_URL}#{Tty.reset}"
   end
-  puts e.backtrace
+  $stderr.puts e.backtrace
   exit 1
 else
   exit 1 if Homebrew.failed?
